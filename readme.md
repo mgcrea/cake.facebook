@@ -14,13 +14,8 @@ Facebook API rewritten for CakePHP
 
 ## License ##
 
-* Copyright (c) 2010 Magenta Creations. All rights reserved.
-* Licensed under a Creative Commons Attribution-ShareAlike 3.0 License.
-*  Summary : <http://creativecommons.org/licenses/by-sa/3.0/>
-*  Legal : <http://creativecommons.org/licenses/by-sa/3.0/legalcode>
-
-## Copyright ##
-
-Copyright 2010<br/>
-Magenta Creations<br/>
-http://www.mg-crea.com<br/>
+ * Licensed under The MIT License
+ * Redistributions of files must retain the above copyright notice.
+ *
+ * @copyright Copyright 2011, Magenta Creations (http://mg-crea.com)
+ * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
