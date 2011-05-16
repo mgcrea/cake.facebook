@@ -10,6 +10,7 @@ class FacebookComponent extends Component {
 
 	var $config = array(
 		'app_id' => null,
+		'api_key' => null,
 		'app_secret' => null,
 		'certificate' => null,
 		'load_legacy_api' => false,
@@ -31,6 +32,7 @@ class FacebookComponent extends Component {
 	public static $CURL_OPTS = array(
 		CURLOPT_CONNECTTIMEOUT => 10,
 		CURLOPT_RETURNTRANSFER => true,
+		CURLOPT_FOLLOWLOCATION => true,
 		CURLOPT_TIMEOUT        => 60,
 		CURLOPT_USERAGENT      => 'facebook-php-2.0',
 	);
@@ -50,17 +52,69 @@ class FacebookComponent extends Component {
 	function graph($request = 'me', $options = array()) {
 
 		// check for an access_token
-		if(!$this->getSession('access_token')) {
-			$this->getToken();
+		if(!$this->checkToken() && !$this->getToken()) {
+			trigger_error("Unable to get an access_token from facebook", E_USER_ERROR);
+		}
+
+		// check if we need a picture ~ we won't check certs for that
+		if(preg_match('/\/picture$/', $request)) {
+			self::$CURL_OPTS = array_merge_keys(self::$CURL_OPTS, array(
+				CURLOPT_BINARYTRANSFER => true,
+				CURLOPT_SSL_VERIFYPEER => false
+			));
 		}
 
 		$defaults = array(
-			'access_token' => $this->getSession('access_token')
+			'access_token' => $this->getSession('access_token'),
+			'metadata' => 1
+			//'limit' => null,
+			//'offset' => null,
+			//'until' => null,
+			//'since' => null,
 		);
-		$url = $this->getUrl('graph', $request, array_merge($defaults, $options));
-		$response = $this->oauthRequest($url);
+		$url = $this->getUrl('graph', $request, array_merge($defaults, $options)); debug($url);
+		//if(!empty($options['debug'])) debug($url); //exit;
+		$response = $this->oauthRequest($url, array('check_token' => true));
 
 		return $response;
+
+	}
+
+/**
+ * picture() ~ Returns facebook picture
+ *
+ * @param string $request
+ * @param array $options to pass to the api (limit, offset, until, since)
+ * @return blob picture
+ * @access public
+ */
+	function picture($request = 'me', $options = array()) {
+
+		$defaults = array(
+			'type' => 'square', // square (50x50), small (50x%), normal (100x%), large (200x%)
+			//'return_ssl_resources' => true
+		);
+
+		return $this->graph($request . '/picture', array_merge($defaults, $options));
+
+	}
+
+/**
+ * search() ~ Search information
+ *
+ * @param string $request
+ * @param array $options to pass to the api (limit, offset, until, since)
+ * @return blob picture
+ * @access public
+ */
+	function search($request = null, $options = array()) {
+
+		$defaults = array(
+			'q' => $request
+			//'type' => null,
+		);
+
+		return $this->graph('search', array_merge($defaults, $options));
 
 	}
 
@@ -68,20 +122,6 @@ class FacebookComponent extends Component {
  * login() ~ handle facebook login
  */
 	function login($options = array()) {
-
-		// check for any login information from facebook
-		if(!empty($this->params['url']['code'])) {
-
-			// check state from login
-			$state = $this->params['url']['state'];
-			if(empty($state) || $state != $this->getSession('state')) {
-				trigger_error("The state does not match. You may be a victim of CSRF.");
-				exit;
-			}
-
-			$this->setSession('code', $this->params['url']['code']);
-			return $this->controller->redirect(array('controller' => $this->params['controller'], 'action' => 'index'));
-		}
 
 		// generate random state to protect from crsf
 		$state = md5(uniqid(rand(), true));
@@ -107,21 +147,29 @@ class FacebookComponent extends Component {
  */
 	protected function getToken($options = array()) {
 
+		// facebook login : http://developers.facebook.com/docs/authentication/#app-login
+
 		$defaults = array(
 			'client_id' => $this->config['app_id'],
 			'client_secret' => $this->config['app_secret'],
 			'redirect_uri' => $this->url,
-			'code' => $this->getSession('code')
+			'code' => $this->getSession('code'), // user login
+			//'grant_type' => "client_credentials", // app login
+
 		);
 
-		$url = $this->getUrl('graph', 'oauth/access_token', array_merge($defaults, $options));
-		$response = $this->oauthRequest($url); debug($response);
+		$url = $this->getUrl('graph', 'oauth/access_token', array_merge($defaults, $options)); //debug($url); exit;
+		$response = $this->oauthRequest($url); //debug($response);
+
+		if(!is_string($response)) return false;
+
 		parse_str($response, $response);
 
 		if(!empty($response['access_token'])) {
 			// update session
 			$this->setSession('access_token', $response['access_token']);
-			if(!empty($response['expires'])) $this->setSession('expires', $response['expires']);
+			$this->setSession('access_token_time', time());
+			if(!empty($response['expires'])) $this->setSession('access_token_expires', $response['expires']);
 
 			return true;
 		}
@@ -131,11 +179,27 @@ class FacebookComponent extends Component {
 	}
 
 /**
+ * checkToken() ~ requests an access_token using a session code from login
+ */
+	protected function checkToken($options = array()) {
+
+		// handle expiration
+		$expiration = $this->getSession('access_token_time') + $this->getSession('access_token_expires') - 1;
+		if(time() >= $expiration) {
+			$this->setSession(array('access_token' => null, 'access_token_time' => null, 'access_token_expires' => null));
+		}
+
+		return (boolean) $this->getSession('access_token');
+
+	}
+
+/**
  * logout()
  */
 	function logout() {
-		$this->setSession(null);
-		$url = $this->getLogoutUrl(); //debug($url); exit;
+
+		$url = $this->getLogoutUrl();
+		$this->setSession(null); //debug($url); debug($this->getSession()); exit;
 		return $this->controller->redirect($url);
 	}
 
@@ -144,8 +208,8 @@ class FacebookComponent extends Component {
  */
 	protected function getLogoutUrl($options = array()) {
 		$defaults = array(
-			'client_id' => $this->config['app_id'],
-			'access_token' => $this->getSession('access_token'),
+			'api_key' => $this->config['api_key'],
+			'session_key' => $this->getSession('code'),
 			'next' => $this->url(array('controller' => $this->params['controller'], 'action' => 'index'))
 		);
 		return $this->getUrl('www', 'logout.php', array_merge($defaults, $options));
@@ -161,8 +225,15 @@ class FacebookComponent extends Component {
 /**
  * setSession()
  */
-	function setSession($param = null, $value = null) {
-		return $this->Session->write('Auth.' . $this->name . ($param ? '.' . $param : null), $value);
+	function setSession($param, $value = null) {
+
+		if(!is_array($param)) return $this->Session->write('Auth.' . $this->name . ($param ? '.' . $param : null), $value);
+
+		foreach($param as $key => $value) {
+			$this->setSession($key, $value);
+		}
+
+		return true;
 	}
 
 /**
@@ -198,17 +269,17 @@ class FacebookComponent extends Component {
 	}
 
 /**
- * oauthRequest()
+ * oauthRequest() handle json responses from makeRequest
  */
 	protected function oauthRequest($url, $options = array()) {
 
-		$response = $this->makeRequest($url, $options);
-		$result = json_decode($response, true);
-		$response = $result ?: $response;
+		$response = $this->makeRequest($url, $options); debug($url);
+		if(!empty($response[0]) && $response[0] == '{') $result = json_decode($response, true);
+		$response = !empty($result) ? $result : $response;
 
 		// results are returned, errors are thrown
 		if (is_array($response) && !empty($response['error'])) {
-			trigger_error($response['error']['type'] . ': ' . $response['error']['message'], E_USER_WARNING);
+			trigger_error($response['error']['type'] . ': ' . $response['error']['message'] . ' ~ ' . $url, E_USER_WARNING);
 		}
 
 		return $response;
@@ -216,7 +287,7 @@ class FacebookComponent extends Component {
 	}
 
 /**
- * makeRequest()
+ * makeRequest() performs actual requests
  */
 	protected function makeRequest($url, $options = array()) {
 
@@ -230,11 +301,22 @@ class FacebookComponent extends Component {
 		} else {
 
 			$ch = curl_init($url);
+			$opts = self::$CURL_OPTS;
 
-			curl_setopt_array($ch, array_merge_keys(self::$CURL_OPTS, $options));
+			// disable the 'Expect: 100-continue' behaviour. This causes CURL to wait
+			// for 2 seconds if the server does not support this header.
+			if (isset($opts[CURLOPT_HTTPHEADER])) {
+				$existing_headers = $opts[CURLOPT_HTTPHEADER];
+				$existing_headers[] = 'Expect:';
+				$opts[CURLOPT_HTTPHEADER] = $existing_headers;
+			} else {
+				$opts[CURLOPT_HTTPHEADER] = array('Expect:');
+			}
+
+			curl_setopt_array($ch, $opts);
 			$response = curl_exec($ch);
 
-			if (curl_errno($ch) == 60) { // CURLE_SSL_CACERT
+			if (curl_errno($ch) == 60) { // CURL_SSL_CACERT
 				trigger_error('Invalid or no certificate authority found', E_USER_ERROR);
 			}
 
@@ -268,7 +350,7 @@ class FacebookComponent extends Component {
 		$this->action =& $this->controller->action;
 
 		$this->config = array_merge($this->config, $settings);
-		$this->url = $this->url();
+		$this->url = $this->url(array('action' => 'index'));
 
 		// load legacy api on demand
 		if($this->config['load_legacy_api']) {
@@ -279,20 +361,33 @@ class FacebookComponent extends Component {
 		if(!$this->config['certificate']) $this->config['certificate'] = dirname(__FILE__) . DS . '..' . DS . '..' . DS . 'vendors' . DS . 'facebook' . DS . 'src' . DS . 'fb_ca_chain_bundle.crt';
 		self::$CURL_OPTS[CURLOPT_CAINFO] = $this->config['certificate'];
 
+		// check for any login information from facebook
+		if(!empty($this->params['url']['code'])) {
+
+			// check state from login
+			$state = $this->params['url']['state'];
+			if(empty($state) || $state != $this->getSession('state')) {
+				trigger_error("The state does not match. You may be a victim of CSRF.");
+				exit;
+			}
+
+			$this->setSession('code', $this->params['url']['code']);
+			return $this->controller->redirect(array('action' => 'index'));
+		}
+
 	}
 
 /**
  * startup() is fired after the controllers' beforeFilter, but before the controller action.
  */
 	function startup(&$controller) {
-
 	}
 
 /**
  * beforeRender() is fired before a view is rendered.
  */
 	function beforeRender(&$controller) {
-
+		$this->controller->set('facebookConfig', array('app_id' => $this->config['app_id']));
 	}
 
 /**
