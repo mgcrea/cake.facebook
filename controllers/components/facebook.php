@@ -1,7 +1,5 @@
 <?php
 
-App::import('Vendor', 'Facebook.facebook/src/facebook');
-
 class FacebookComponent extends Component {
 
 	var $name = 'Facebook';
@@ -53,6 +51,8 @@ class FacebookComponent extends Component {
 
 		// check for an access_token
 		if(!$this->checkToken() && !$this->getToken()) {
+			// reset the session
+			//$this->setSession(null);
 			trigger_error("Unable to get an access_token from facebook", E_USER_ERROR);
 		}
 
@@ -66,13 +66,13 @@ class FacebookComponent extends Component {
 
 		$defaults = array(
 			'access_token' => $this->getSession('access_token'),
-			'metadata' => 1
+			'metadata' => false,
 			//'limit' => null,
 			//'offset' => null,
 			//'until' => null,
 			//'since' => null,
 		);
-		$url = $this->getUrl('graph', $request, array_merge($defaults, $options)); debug($url);
+		$url = $this->getUrl('graph', $request, array_merge($defaults, $options)); //debug($url);
 		//if(!empty($options['debug'])) debug($url); //exit;
 		$response = $this->oauthRequest($url, array('check_token' => true));
 
@@ -97,6 +97,10 @@ class FacebookComponent extends Component {
 
 		return $this->graph($request . '/picture', array_merge($defaults, $options));
 
+	}
+
+	function pictureUrl($request) {
+		return $this->getUrl('graph', $request . '/picture');
 	}
 
 /**
@@ -179,14 +183,15 @@ class FacebookComponent extends Component {
 	}
 
 /**
- * checkToken() ~ requests an access_token using a session code from login
+ * checkToken() ~ checks an access_token using expires timestamp
  */
 	protected function checkToken($options = array()) {
 
 		// handle expiration
 		$expiration = $this->getSession('access_token_time') + $this->getSession('access_token_expires') - 1;
-		if(time() >= $expiration) {
-			$this->setSession(array('access_token' => null, 'access_token_time' => null, 'access_token_expires' => null));
+		if($expiration != -1 && time() >= $expiration) {
+			$this->setSession(null);
+			return $this->login();
 		}
 
 		return (boolean) $this->getSession('access_token');
@@ -226,13 +231,8 @@ class FacebookComponent extends Component {
  * setSession()
  */
 	function setSession($param, $value = null) {
-
 		if(!is_array($param)) return $this->Session->write('Auth.' . $this->name . ($param ? '.' . $param : null), $value);
-
-		foreach($param as $key => $value) {
-			$this->setSession($key, $value);
-		}
-
+		foreach($param as $key => $value) $this->setSession($key, $value);
 		return true;
 	}
 
@@ -273,7 +273,7 @@ class FacebookComponent extends Component {
  */
 	protected function oauthRequest($url, $options = array()) {
 
-		$response = $this->makeRequest($url, $options); debug($url);
+		$response = $this->makeRequest($url, $options); //debug($url);
 		if(!empty($response[0]) && $response[0] == '{') $result = json_decode($response, true);
 		$response = !empty($result) ? $result : $response;
 
@@ -354,6 +354,7 @@ class FacebookComponent extends Component {
 
 		// load legacy api on demand
 		if($this->config['load_legacy_api']) {
+			App::import('Vendor', 'Facebook.facebook/src/facebook');
 			$this->Facebook = new Facebook(array('appId' => $settings['app_id'], 'secret' => $settings['app_secret']));
 		}
 
@@ -363,6 +364,7 @@ class FacebookComponent extends Component {
 
 		// check for any login information from facebook
 		if(!empty($this->params['url']['code'])) {
+			//debug($this->params); exit;
 
 			// check state from login
 			$state = $this->params['url']['state'];
