@@ -12,10 +12,12 @@ Facebook API rewritten for CakePHP
 * contact@mg-crea.com
 * http://mg-crea.com
 
+## Copyright ##
+
+* Copyright 2011, Magenta Creations (http://mg-crea.com)
+
 ## License ##
 
- * Licensed under The MIT License
- * Redistributions of files must retain the above copyright notice.
- *
- * @copyright Copyright 2011, Magenta Creations (http://mg-crea.com)
- * @license MIT License (http://www.opensource.org/licenses/mit-license.php)
+* Licensed under The MIT License
+* Redistributions of files must retain the above copyright notice.
+* MIT License (http://www.opensource.org/licenses/mit-license.php)
